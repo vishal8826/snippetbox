@@ -73,6 +73,21 @@ func (m *UserModel) Authenticate(email, password string) (int, error) {
 
 }
 
+func (m *UserModel) UpdatePassword(email, password string) error {
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return err
+	}
+
+	stmt := "UPDATE users SET hashed_password = ? WHERE email = ?"
+	_, err = m.DB.Exec(stmt, hashedPassword, email)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // We'll use the Exists method to check if a user exists with a specific ID.
 func (m *UserModel) Exists(id int) (bool, error) {
 	var exists bool

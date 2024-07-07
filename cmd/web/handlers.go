@@ -12,6 +12,13 @@ import (
 	"github.com/vishal8826/snippetbox/internal/models"
 )
 
+type passwordForm struct {
+	CurrentPassword     string `form:"currentPassword"`
+	NewPassword         string `form:"newPassword"`
+	ConfirmPassword     string `form:"confirmPassword"`
+	validator.Validator `form:"-"`
+}
+
 type userLoginForm struct {
 	Email               string `form:"email"`
 	Password            string `form:"password"`
@@ -260,4 +267,70 @@ func (app *application) accountView(w http.ResponseWriter, r *http.Request) {
 	data.User = user
 
 	app.render(w, http.StatusOK, "account.tmpl", data)
+}
+
+func (app *application) passwordUpdate(w http.ResponseWriter, r *http.Request) {
+	data := app.newTemplateData(r)
+	data.Form = passwordForm{}
+	app.render(w, http.StatusOK, "password.tmpl", data)
+}
+
+func (app *application) passwordUpdatePost(w http.ResponseWriter, r *http.Request) {
+	var form passwordForm
+
+	err := app.decodePostForm(r, &form)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	form.CheckField(validator.NotBlank(form.CurrentPassword), "currentPassword", "This field cannot be empty")
+	form.CheckField(validator.NotBlank(form.NewPassword), "newPassword", "The password cannot be blank")
+	form.CheckField(validator.NotBlank(form.ConfirmPassword), "confirmPassword", "The password cannot be blank")
+	form.CheckField(validator.MinChars(form.NewPassword, 8), "newPassword", "The password must be atleast 8 characters long")
+	form.CheckField(validator.MinChars(form.ConfirmPassword, 8), "confirmPassword", "The password must be atleast 8 characters long")
+	form.CheckField(form.NewPassword == form.ConfirmPassword, "confirmPassword", "Passwords do not match")
+
+	if !form.Valid() {
+		data := app.newTemplateData(r)
+		data.Form = form
+		app.render(w, http.StatusUnprocessableEntity, "password.tmpl", data)
+		return
+	}
+
+	userID := app.sessionManager.Get(r.Context(), "authenticatedUserID")
+
+	user, err := app.users.Get(userID.(int))
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			http.Redirect(w, r, "/user/login", http.StatusSeeOther)
+		} else {
+			app.serverError(w, err)
+		}
+		return
+	}
+
+	_, err = app.users.Authenticate(user.Email, form.CurrentPassword)
+	if err != nil {
+		if errors.Is(err, models.ErrorInvalidCredentials) {
+			form.AddNonFieldError("Password is incorrect")
+
+			data := app.newTemplateData(r)
+			data.Form = form
+			app.render(w, http.StatusUnprocessableEntity, "password.tmpl", data)
+		} else {
+			app.serverError(w, err)
+		}
+		return
+	}
+
+	err = app.users.UpdatePassword(user.Email, form.NewPassword)
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	app.sessionManager.Put(r.Context(), "flash", "Your password is updated successfully")
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
